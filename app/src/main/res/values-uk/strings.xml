@@ -1,47 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- TODO: Ukrainian translations -->
-    <string name="mesh_service_notification_content">Mesh працює — %1$d пірів</string>
+<string name="mesh_service_notification_content">Mesh працює — %1$d пірів</string>
 
-  <string name="verify_title">verify</string>
-  <string name="verify_my_qr_title">scan to verify me</string>
-  <string name="verify_scan_prompt_friend">scan someone elses qr</string>
-  <string name="verify_scan_someone">scan someone elses qr</string>
-  <string name="verify_show_my_qr">show my qr</string>
-  <string name="verify_remove">remove verification</string>
-  <string name="verify_qr_unavailable">qr unavailable</string>
-  <string name="verify_camera_permission">camera permission is needed to scan qr codes</string>
-  <string name="verify_request_camera">enable camera</string>
-  <string name="verify_paste_label">paste verification url</string>
-  <string name="verify_validate">validate</string>
-  <string name="verify_scanned">verification requested</string>
-  <string name="security_verification_title">security verification</string>
-  <string name="fingerprint_their">their fingerprint</string>
-  <string name="fingerprint_yours">your fingerprint</string>
-  <string name="fingerprint_pending">handshake pending</string>
-  <string name="fingerprint_no_peer">open a private chat to view fingerprints</string>
-  <string name="fingerprint_status_verified">encrypted &amp; verified</string>
-  <string name="fingerprint_status_encrypted">encrypted</string>
-  <string name="fingerprint_status_handshaking">handshaking</string>
-  <string name="fingerprint_status_failed">handshake failed</string>
-  <string name="fingerprint_status_uninitialized">not encrypted</string>
-  <string name="fingerprint_verified_label">verified</string>
-  <string name="fingerprint_verified_message">you have verified this persons identity.</string>
-  <string name="fingerprint_not_verified_label">not verified</string>
-  <string name="fingerprint_not_verified_message_fmt">compare these fingerprints with %1$s using a secure channel.</string>
-  <string name="fingerprint_mark_verified">mark as verified</string>
-  <string name="fingerprint_start_handshake">start handshake</string>
-  <string name="fingerprint_copy">copy</string>
-  <string name="verify_mutual_match_title">Mutual verification</string>
-  <string name="verify_mutual_match_body">You and %1$s verified each other</string>
-  <string name="verify_mutual_system_message">mutual verification with %1$s</string>
-  <string name="verify_success_title">Verified</string>
-  <string name="verify_success_body">You verified %1$s</string>
-  <string name="verify_success_system_message">verified %1$s</string>
-    <!-- Power mode change notifications -->
-    <string name="power_mode_performance">⚡ Режим максимальної продуктивності</string>
-    <string name="power_mode_balanced">🔋 Збалансований режим енергії</string>
-    <string name="power_mode_power_saver">🪫 Режим економії заряду</string>
-    <string name="power_mode_ultra_low_power">🔴 Критичний заряд — пасивний режим</string>
+<string name="verify_title">перевірити</string>
+<string name="verify_my_qr_title">скануйте, щоб перевірити мене</string>
+<string name="verify_scan_prompt_friend">скануйте QR-код іншої особи</string>
+<string name="verify_scan_someone">скануйте QR-код іншої особи</string>
+<string name="verify_show_my_qr">показати мій QR-код</string>
+<string name="verify_remove">видалити підтвердження</string>
+<string name="verify_qr_unavailable">QR-код недоступний</string>
+<string name="verify_camera_permission">для сканування QR-кодів потрібен доступ до камери</string>
+<string name="verify_request_camera">увімкнути камеру</string>
+<string name="verify_paste_label">вставити посилання для перевірки</string>
+<string name="verify_validate">підтвердити</string>
+<string name="verify_scanned">запит на перевірку надіслано</string>
+<string name="security_verification_title">перевірка безпеки</string>
+<string name="fingerprint_their">їхній відбиток</string>
+<string name="fingerprint_yours">ваш відбиток</string>
+<string name="fingerprint_pending">очікування рукостискання</string>
+<string name="fingerprint_no_peer">відкрийте приватний чат, щоб переглянути відбитки</string>
+<string name="fingerprint_status_verified">зашифровано та перевірено</string>
+<string name="fingerprint_status_encrypted">зашифровано</string>
+<string name="fingerprint_status_handshaking">виконується рукостискання</string>
+<string name="fingerprint_status_failed">помилка рукостискання</string>
+<string name="fingerprint_status_uninitialized">не зашифровано</string>
+<string name="fingerprint_verified_label">перевірено</string>
+<string name="fingerprint_verified_message">ви підтвердили особу цієї людини.</string>
+<string name="fingerprint_not_verified_label">не перевірено</string>
+<string name="fingerprint_not_verified_message_fmt">порівняйте ці відбитки з %1$s через безпечний канал зв\'язку.</string>
+<string name="fingerprint_mark_verified">позначити як перевірене</string>
+<string name="fingerprint_start_handshake">почати рукостискання</string>
+<string name="fingerprint_copy">копіювати</string>
+<string name="verify_mutual_match_title">Взаємна перевірка</string>
+<string name="verify_mutual_match_body">Ви та %1$s перевірили один одного</string>
+<string name="verify_mutual_system_message">взаємна перевірка з %1$s</string>
+<string name="verify_success_title">Перевірено</string>
+<string name="verify_success_body">Ви перевірили %1$s</string>
+<string name="verify_success_system_message">перевірено %1$s</string>
+<string name="power_mode_performance">⚡ Режим максимальної продуктивності</string>
+<string name="power_mode_balanced">🔋 Збалансований режим енергії</string>
+<string name="power_mode_power_saver">🪫 Режим економії заряду</string>
+<string name="power_mode_ultra_low_power">🔴 Критичний заряд — пасивний режим</string>
 </resources>
 
