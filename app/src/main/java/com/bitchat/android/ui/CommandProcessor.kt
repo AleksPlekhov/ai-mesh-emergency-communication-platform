@@ -22,7 +22,14 @@ class CommandProcessor(
         CommandSuggestion("/hug", emptyList(), "<nickname>", "send someone a warm hug"),
         CommandSuggestion("/j", listOf("/join"), "<channel>", "join or create a channel"),
         CommandSuggestion("/m", listOf("/msg"), "<nickname> [message]", "send private message"),
+        CommandSuggestion("/peer-status", emptyList(), "[nickname]", "show telemetry for a peer"),
         CommandSuggestion("/slap", emptyList(), "<nickname>", "slap someone with a trout"),
+        CommandSuggestion("/telemetry", emptyList(), null, "show telemetry status"),
+        CommandSuggestion("/telemetry-broadcast", emptyList(), null, "broadcast telemetry to mesh"),
+        CommandSuggestion("/telemetry-disable", emptyList(), null, "stop all telemetry sensors"),
+        CommandSuggestion("/telemetry-enable", emptyList(), null, "enable survival telemetry sensors"),
+        CommandSuggestion("/telemetry-pack", emptyList(), null, "pack and show telemetry size"),
+        CommandSuggestion("/telemetry-profile", emptyList(), "<survival|navigation|seismic|environment|minimal>", "apply sensor profile"),
         CommandSuggestion("/unblock", emptyList(), "<nickname>", "unblock a peer"),
         CommandSuggestion("/w", emptyList(), null, "see who's online")
     )
@@ -45,6 +52,13 @@ class CommandProcessor(
             "/hug" -> handleActionCommand(parts, "gives", "a warm hug 🫂", meshService, myPeerID, onSendMessage)
             "/slap" -> handleActionCommand(parts, "slaps", "around a bit with a large trout 🐟", meshService, myPeerID, onSendMessage)
             "/channels" -> handleChannelsCommand()
+            "/telemetry" -> handleTelemetryCommand(meshService)
+            "/telemetry-enable" -> handleTelemetryEnableCommand(meshService)
+            "/telemetry-disable" -> handleTelemetryDisableCommand(meshService)
+            "/telemetry-pack" -> handleTelemetryPackCommand(meshService)
+            "/telemetry-broadcast" -> handleTelemetryBroadcastCommand(meshService)
+            "/telemetry-profile" -> handleTelemetryProfileCommand(parts, meshService)
+            "/peer-status" -> handlePeerStatusCommand(parts, meshService)
             else -> handleUnknownCommand(cmd)
         }
         
@@ -365,6 +379,111 @@ class CommandProcessor(
             isRelay = false
         )
         messageManager.addMessage(systemMessage)
+    }
+
+    // MARK: - Telemetry Commands
+
+    private fun handleTelemetryCommand(meshService: BluetoothMeshService) {
+        val agent = com.bitchat.android.telemetry.TelemetryAgent.getInstance(meshService.getContext())
+        val summary = agent.getSummary()
+        val active = (summary["active_sensors"] as? List<*>)?.joinToString(", ") ?: "none"
+        val size = summary["packed_bytes"] as? Int ?: 0
+        messageManager.addMessage(BitchatMessage(
+            sender = "system",
+            content = "telemetry: ${summary["sensor_count"]} sensors active ($active) | packed: ${size}B",
+            timestamp = Date(), isRelay = false
+        ))
+    }
+
+    private fun handleTelemetryEnableCommand(meshService: BluetoothMeshService) {
+        val agent = com.bitchat.android.telemetry.TelemetryAgent.getInstance(meshService.getContext())
+        agent.applyProfile(agent.PROFILE_SURVIVAL)
+        messageManager.addMessage(BitchatMessage(
+            sender = "system",
+            content = "telemetry: survival profile enabled (battery, location, pressure, temperature, connectivity)",
+            timestamp = Date(), isRelay = false
+        ))
+    }
+
+    private fun handleTelemetryDisableCommand(meshService: BluetoothMeshService) {
+        val agent = com.bitchat.android.telemetry.TelemetryAgent.getInstance(meshService.getContext())
+        agent.release()
+        messageManager.addMessage(BitchatMessage(
+            sender = "system",
+            content = "telemetry: all sensors disabled",
+            timestamp = Date(), isRelay = false
+        ))
+    }
+
+    private fun handleTelemetryPackCommand(meshService: BluetoothMeshService) {
+        val agent = com.bitchat.android.telemetry.TelemetryAgent.getInstance(meshService.getContext())
+        val packed = try { agent.pack() } catch (e: Exception) { null }
+        val msg = if (packed != null) "packed ${packed.size}B telemetry ready" else "pack failed (no sensors active?)"
+        messageManager.addMessage(BitchatMessage(sender = "system", content = "telemetry: $msg", timestamp = Date(), isRelay = false))
+    }
+
+    private fun handleTelemetryBroadcastCommand(meshService: BluetoothMeshService) {
+        val agent = com.bitchat.android.telemetry.TelemetryAgent.getInstance(meshService.getContext())
+        agent.attachMesh(meshService)
+        agent.broadcastToMainChannel()
+        messageManager.addMessage(BitchatMessage(
+            sender = "system", content = "telemetry: broadcast sent to mesh", timestamp = Date(), isRelay = false
+        ))
+    }
+
+    private fun handleTelemetryProfileCommand(parts: List<String>, meshService: BluetoothMeshService) {
+        val agent = com.bitchat.android.telemetry.TelemetryAgent.getInstance(meshService.getContext())
+        val profileName = parts.getOrNull(1)?.lowercase() ?: ""
+        val profile = when (profileName) {
+            "survival"    -> agent.PROFILE_SURVIVAL
+            "navigation"  -> agent.PROFILE_NAVIGATION
+            "seismic"     -> agent.PROFILE_SEISMIC
+            "environment" -> agent.PROFILE_ENVIRONMENT
+            "minimal"     -> agent.PROFILE_MINIMAL
+            else -> {
+                messageManager.addMessage(BitchatMessage(
+                    sender = "system",
+                    content = "usage: /telemetry-profile <survival|navigation|seismic|environment|minimal>",
+                    timestamp = Date(), isRelay = false
+                ))
+                return
+            }
+        }
+        agent.applyProfile(profile)
+        messageManager.addMessage(BitchatMessage(
+            sender = "system",
+            content = "telemetry: applied $profileName profile (${profile.sensors.size} sensors)",
+            timestamp = Date(), isRelay = false
+        ))
+    }
+
+    private fun handlePeerStatusCommand(parts: List<String>, meshService: BluetoothMeshService) {
+        val targetNick = parts.getOrNull(1)
+        if (targetNick == null) {
+            // Show all peers with telemetry
+            val peers = meshService.getConnectedPeers()
+            val lines = peers.mapNotNull { peerID ->
+                val telBytes = meshService.getPeerManager().getPeerTelemetry(peerID) ?: return@mapNotNull null
+                val summary = com.bitchat.android.mesh.TelemetryFormatter.format(telBytes) ?: "no telemetry"
+                val nick = meshService.getPeerNicknames()[peerID] ?: peerID.take(8)
+                "$nick: $summary"
+            }
+            val msg = if (lines.isEmpty()) "no peer telemetry data yet" else lines.joinToString("\n")
+            messageManager.addMessage(BitchatMessage(sender = "system", content = msg, timestamp = Date(), isRelay = false))
+        } else {
+            val peerID = meshService.getConnectedPeers().firstOrNull { pid ->
+                (meshService.getPeerNicknames()[pid] ?: "").equals(targetNick, ignoreCase = true)
+            }
+            if (peerID == null) {
+                messageManager.addMessage(BitchatMessage(sender = "system", content = "peer '$targetNick' not found", timestamp = Date(), isRelay = false))
+                return
+            }
+            val telBytes = meshService.getPeerManager().getPeerTelemetry(peerID)
+            val msg = if (telBytes != null) {
+                com.bitchat.android.mesh.TelemetryFormatter.format(telBytes) ?: "telemetry received (unreadable)"
+            } else "no telemetry data from $targetNick"
+            messageManager.addMessage(BitchatMessage(sender = "system", content = msg, timestamp = Date(), isRelay = false))
+        }
     }
     
     // MARK: - Command Autocomplete

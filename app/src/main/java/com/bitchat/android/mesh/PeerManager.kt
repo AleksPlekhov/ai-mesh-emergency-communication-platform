@@ -82,7 +82,10 @@ class PeerManager {
     
     // Centralized fingerprint management
     private val fingerprintManager = PeerFingerprintManager.getInstance()
-    
+
+    // Per-peer telemetry cache (latest packed Telemeter bytes received via ANNOUNCE TLV)
+    private val peerTelemetry = ConcurrentHashMap<String, ByteArray>()
+
     // Delegate for callbacks
     var delegate: PeerManagerDelegate? = null
     
@@ -343,6 +346,19 @@ class PeerManager {
     fun getActivePeerCount(): Int {
         return getActivePeerIDs().size
     }
+
+    /**
+     * Store the latest packed telemetry bytes received from a peer via ANNOUNCE TLV.
+     */
+    fun updatePeerTelemetry(peerID: String, packed: ByteArray) {
+        peerTelemetry[peerID] = packed
+    }
+
+    /**
+     * Retrieve the most recent packed telemetry bytes for [peerID], or null if none received.
+     */
+    fun getPeerTelemetry(peerID: String): ByteArray? = peerTelemetry[peerID]
+
     
     /**
      * Clear all peer data

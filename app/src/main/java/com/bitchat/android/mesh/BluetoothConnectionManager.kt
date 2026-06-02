@@ -362,6 +362,13 @@ class BluetoothConnectionManager(
     fun connectToAddress(address: String): Boolean = clientManager.connectToAddress(address)
     fun disconnectAddress(address: String) { connectionTracker.disconnectDevice(address) }
 
+    /** Apply a BLE range-test config live to all three subsystems. */
+    fun applyRangeTestConfig(config: BleRangeTestConfig) {
+        powerManager.bleCodec = config.codec
+        clientManager.configureCodec(config.codec)
+        serverManager.applyConfig(config)
+    }
+
 
     // Optionally disconnect all connections (server and client)
     fun disconnectAll() {

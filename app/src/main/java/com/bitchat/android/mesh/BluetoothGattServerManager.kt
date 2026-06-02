@@ -4,8 +4,12 @@ import android.bluetooth.*
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
+import android.bluetooth.le.AdvertisingSet
+import android.bluetooth.le.AdvertisingSetCallback
+import android.bluetooth.le.AdvertisingSetParameters
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
+import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import com.bitchat.android.protocol.BitchatPacket
@@ -41,10 +45,35 @@ class BluetoothGattServerManager(
     // GATT server for peripheral mode
     private var gattServer: BluetoothGattServer? = null
     private var characteristic: BluetoothGattCharacteristic? = null
+
+    // Legacy advertising (1M PHY, API 21+)
     private var advertiseCallback: AdvertiseCallback? = null
-    
+    // Extended advertising (2M / Coded PHY, API 26+)
+    private var advertisingSetCallback: AdvertisingSetCallback? = null
+
+    // Active range-test config — call applyConfig() to change; restarts advertising automatically
+    @Volatile private var currentConfig: BleRangeTestConfig = BleRangeTestConfig()
+    private val currentCodec get() = currentConfig.codec
+
     // State management
     private var isActive = false
+
+    /**
+     * Apply a full range-test configuration (PHY + TX power + interval).
+     * Restarts advertising immediately with the new parameters.
+     * Existing GATT connections renegotiate PHY via [onPhyUpdate].
+     */
+    fun applyConfig(config: BleRangeTestConfig) {
+        if (currentConfig == config) return
+        Log.i(TAG, "BLE config → ${config.codec.label} / ${config.txPower.label} / ${config.interval.label}")
+        currentConfig = config
+        restartAdvertising()
+    }
+
+    /** Convenience for codec-only changes (e.g. from MeshBatteryCoordinator). */
+    fun configureCodec(codec: BleCodec) {
+        applyConfig(currentConfig.copy(codec = codec))
+    }
 
     /**
      * Disconnect a specific device (used by ConnectionManager to enforce overall limits)
@@ -163,10 +192,14 @@ class BluetoothGattServerManager(
                 when (newState) {
                     BluetoothProfile.STATE_CONNECTED -> {
                         Log.i(TAG, "Server: Device connected ${device.address}")
-                        
-                        // Get best available RSSI (scan RSSI for server connections)
+
+                        // Express PHY preference; client will confirm via onPhyUpdate
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val codec = currentCodec
+                            gattServer?.setPreferredPhy(device, codec.phyMask, codec.phyMask, codec.txOption)
+                        }
+
                         val rssi = connectionTracker.getBestRSSI(device.address) ?: Int.MIN_VALUE
-                        
                         val deviceConn = BluetoothConnectionTracker.DeviceConnection(
                             device = device,
                             rssi = rssi,
@@ -176,9 +209,7 @@ class BluetoothGattServerManager(
 
                         connectionScope.launch {
                             delay(1000)
-                            if (isActive) { // Check if still active
-                                delegate?.onDeviceConnected(device)
-                            }
+                            if (isActive) delegate?.onDeviceConnected(device)
                         }
                     }
                     BluetoothProfile.STATE_DISCONNECTED -> {
@@ -190,6 +221,15 @@ class BluetoothGattServerManager(
                 }
             }
             
+            override fun onPhyUpdate(device: BluetoothDevice, txPhy: Int, rxPhy: Int, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    val phyName = { phy: Int -> when(phy) { 1 -> "1M"; 2 -> "2M"; 3 -> "Coded"; else -> phy.toString() } }
+                    Log.i(TAG, "Server: PHY agreed with ${device.address} → tx=${phyName(txPhy)} rx=${phyName(rxPhy)}")
+                } else {
+                    Log.w(TAG, "Server: PHY negotiation failed for ${device.address}, status=$status — staying on current PHY")
+                }
+            }
+
             override fun onServiceAdded(status: Int, service: BluetoothGattService) {
                 // Guard against callbacks after service shutdown
                 if (!isActive) {
@@ -350,7 +390,13 @@ class BluetoothGattServerManager(
             return
         }
 
-        val settings = powerManager.getAdvertiseSettings()
+        val cfg = currentConfig
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(cfg.interval.legacyMode)
+            .setTxPowerLevel(cfg.txPower.legacyLevel)
+            .setConnectable(true)
+            .setTimeout(0)
+            .build()
         
         val data = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(AppConstants.Mesh.Gatt.SERVICE_UUID))
@@ -385,25 +431,96 @@ class BluetoothGattServerManager(
             }
         }
         
+        // Use extended (AdvertisingSet) API for 2M / Coded PHY; fall back to legacy for 1M
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && currentCodec != BleCodec.PHY_1M) {
+            startExtendedAdvertising(data, scanResponse)
+        } else {
+            try {
+                bleAdvertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
+            } catch (se: SecurityException) {
+                Log.e(TAG, "SecurityException starting advertising: ${se.message}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception starting advertising: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Extended advertising via AdvertisingSetParameters — required for 2M and Coded PHY.
+     * Falls back silently to legacy advertising if the hardware doesn't support it.
+     */
+    @Suppress("MissingPermission")
+    private fun startExtendedAdvertising(data: AdvertiseData, scanResponse: AdvertiseData) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
+        val codec = currentCodec
+        val (primaryPhy, secondaryPhy) = when (codec) {
+            BleCodec.PHY_2M    -> BluetoothDevice.PHY_LE_1M    to BluetoothDevice.PHY_LE_2M
+            BleCodec.CODED_S2,
+            BleCodec.CODED_S8  -> BluetoothDevice.PHY_LE_CODED to BluetoothDevice.PHY_LE_CODED
+            else               -> BluetoothDevice.PHY_LE_1M    to BluetoothDevice.PHY_LE_1M
+        }
+
+        val params = AdvertisingSetParameters.Builder()
+            .setLegacyMode(false)
+            .setConnectable(true)
+            .setPrimaryPhy(primaryPhy)
+            .setSecondaryPhy(secondaryPhy)
+            .setTxPowerLevel(codec.txOption.let { currentConfig.txPower.extendedLevel })
+            .setInterval(currentConfig.interval.extendedInterval)
+            .build()
+
+        advertisingSetCallback = object : AdvertisingSetCallback() {
+            override fun onAdvertisingSetStarted(
+                advertisingSet: AdvertisingSet?,
+                txPower: Int,
+                status: Int
+            ) {
+                if (status == AdvertisingSetCallback.ADVERTISE_SUCCESS) {
+                    Log.i(TAG, "Extended advertising started: ${codec.label}")
+                } else {
+                    Log.e(TAG, "Extended advertising failed (status=$status) — retrying with legacy 1M")
+                    // Hardware doesn't support this PHY; fall back gracefully
+                    connectionScope.launch {
+                        stopAdvertising()
+                        currentConfig = currentConfig.copy(codec = BleCodec.PHY_1M)
+                        startAdvertising()
+                    }
+                }
+            }
+            override fun onAdvertisingSetStopped(advertisingSet: AdvertisingSet?) {
+                Log.d(TAG, "Extended advertising stopped")
+            }
+        }
+
         try {
-            bleAdvertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
-        } catch (se: SecurityException) {
-            Log.e(TAG, "SecurityException starting advertising (missing permission?): ${se.message}")
+            bleAdvertiser?.startAdvertisingSet(params, data, scanResponse, null, null, advertisingSetCallback)
         } catch (e: Exception) {
-            Log.e(TAG, "Exception starting advertising: ${e.message}")
+            Log.e(TAG, "startAdvertisingSet failed: ${e.message} — falling back to legacy")
+            advertisingSetCallback = null
+            connectionScope.launch { startAdvertising() } // retry with 1M
         }
     }
     
     /**
-     * Stop advertising
+     * Stop advertising — handles both legacy and extended advertising paths.
      */
-    @Suppress("DEPRECATION")
+    @Suppress("DEPRECATION", "MissingPermission")
     private fun stopAdvertising() {
         if (!permissionManager.hasBluetoothPermissions() || bleAdvertiser == null) return
         try {
-            advertiseCallback?.let { cb -> bleAdvertiser.stopAdvertising(cb) }
+            advertiseCallback?.let { bleAdvertiser.stopAdvertising(it) }
+            advertiseCallback = null
         } catch (e: Exception) {
-            Log.w(TAG, "Error stopping advertising: ${e.message}")
+            Log.w(TAG, "Error stopping legacy advertising: ${e.message}")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                advertisingSetCallback?.let { bleAdvertiser.stopAdvertisingSet(it) }
+                advertisingSetCallback = null
+            } catch (e: Exception) {
+                Log.w(TAG, "Error stopping extended advertising: ${e.message}")
+            }
         }
     }
     

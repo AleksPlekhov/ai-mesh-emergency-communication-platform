@@ -16,6 +16,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 
+/**
+ * SafeGuardian terminal color palette — used by EmergencyFmScreen and other emergency UI.
+ */
+object SGColors {
+    val Accent     = Color(0xFFFF9500)
+    val Critical   = Color(0xFFFF3B30)
+    val Warning    = Color(0xFFFFD60A)
+    val Safe       = Color(0xFF30D158)
+    val TriageBlue = Color(0xFF0A84FF)
+    val Error      = Color(0xFFFF5555)
+    val MeshBlue   = Color(0xFF007AFF)
+    val PeerGold   = Color(0xFFFFD700)
+    val TorPurple  = Color(0xFF9B59B6)
+    val MutedGrey  = Color(0xFF8E8E93)
+}
+
 // Colors that match the iOS bitchat theme
 private val DarkColorScheme = darkColorScheme(
     primary = Color(0xFF39FF14),        // Bright green (terminal-like)
