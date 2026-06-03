@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 # Changelog — ResQMesh AI
 
+## [0.0.5] - 2026-06-02
+
+### Added
+- Isolation-gated supplementary Coded (S=8) advertising probe in `BluetoothGattServerManager` — when a node sees fewer than `ISOLATION_PEER_THRESHOLD` (2) active peers it additionally emits low-duty-cycle (~3 s on / ~42 s off) long-range Coded-PHY beacons to give distant or wall-separated BT5 peers an extra chance to discover and connect; stops automatically once the node is well-meshed, saving battery and freeing the 2.4 GHz channel for neighbours
+- `BluetoothGattServerManager.updateMeshDensity(activePeerCount)` and `BluetoothConnectionManager.updateMeshDensity(...)` — feed the active-peer count from `onPeerListUpdated` down to the advertising layer so the probe is driven by a real isolation signal rather than a fixed timer
+
+### Changed
+- Coded-PHY advertising is now **additive, never substitutive**: the 1M legacy advertisement is always kept on air as a floor so BT4 devices can always discover the node. The supplementary S=8 probe is an independent advertising set layered on top, with its own callback, and never replaces the 1M beacon (closes a silent-partition risk where an S=8-only node was invisible to all BT4 scanners). The explicit range-test diagnostic path (user selects a non-1M codec) is unchanged and suppresses the probe so it does not interfere
+
+### Fixed
+- Coded probe degrades gracefully on hardware without Coded PHY / extended advertising: it is gated on `isLeCodedPhySupported`, `isLeExtendedAdvertisingSupported`, and `isMultipleAdvertisementSupported`, every controller call is wrapped in try/catch, and a runtime failure latches the probe off (`codedProbeUnsupported`) so an unsupported device never crashes or retry-spams the advertiser
+
 ## [0.0.4] - 2026-04-22
 
 ### Added

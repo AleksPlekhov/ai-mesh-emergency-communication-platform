@@ -362,6 +362,14 @@ class BluetoothConnectionManager(
     fun connectToAddress(address: String): Boolean = clientManager.connectToAddress(address)
     fun disconnectAddress(address: String) { connectionTracker.disconnectDevice(address) }
 
+    /**
+     * Report current mesh density (active peer count) so the server can decide
+     * whether to run the isolation-gated supplementary Coded (S=8) probe.
+     */
+    fun updateMeshDensity(activePeerCount: Int) {
+        try { serverManager.updateMeshDensity(activePeerCount) } catch (_: Exception) { }
+    }
+
     /** Apply a BLE range-test config live to all three subsystems. */
     fun applyRangeTestConfig(config: BleRangeTestConfig) {
         powerManager.bleCodec = config.codec

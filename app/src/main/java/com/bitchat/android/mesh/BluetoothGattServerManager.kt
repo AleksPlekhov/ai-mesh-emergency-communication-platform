@@ -34,6 +34,16 @@ class BluetoothGattServerManager(
     
     companion object {
         private const val TAG = "BluetoothGattServerManager"
+
+        // --- Isolation-gated supplementary Coded (S=8) probe ---------------------
+        // A node is considered "isolated" when it can see fewer than this many
+        // active peers. Only then do we spend battery on long-range Coded beacons.
+        private const val ISOLATION_PEER_THRESHOLD = 2
+        // Low duty cycle: emit a short Coded burst, then stay silent for a while.
+        // ~3 s on / ~42 s off ≈ 6–7 % air time, so neighbours are not starved of
+        // the 2.4 GHz channel by long Coded packets (the dense-mesh paradox).
+        private const val CODED_PROBE_BURST_MS = 3_000L
+        private const val CODED_PROBE_IDLE_MS  = 42_000L
     }
     
     // Core Bluetooth components
@@ -46,10 +56,23 @@ class BluetoothGattServerManager(
     private var gattServer: BluetoothGattServer? = null
     private var characteristic: BluetoothGattCharacteristic? = null
 
-    // Legacy advertising (1M PHY, API 21+)
+    // Legacy advertising (1M PHY, API 21+) — this is the ALWAYS-ON floor so that
+    // every BT4 scanner can always discover us. Never substituted by Coded.
     private var advertiseCallback: AdvertiseCallback? = null
-    // Extended advertising (2M / Coded PHY, API 26+)
+    // Extended advertising (2M / Coded PHY, API 26+) — used by the explicit
+    // range-test diagnostic path when the user selects a non-1M codec.
     private var advertisingSetCallback: AdvertisingSetCallback? = null
+
+    // Supplementary isolation-triggered Coded (S=8) probe — an INDEPENDENT
+    // advertising set layered ON TOP of the 1M floor (never replacing it). It has
+    // its own callback so stopping it never touches the floor or the diagnostic set.
+    private var codedProbeCallback: AdvertisingSetCallback? = null
+    private var codedProbeJob: kotlinx.coroutines.Job? = null
+    @Volatile private var lastKnownPeerCount = 0
+    // Latched true the first time a Coded probe fails at runtime (hardware claims
+    // support but the controller rejects it). Prevents retry-spam / battery waste.
+    @Volatile private var codedProbeUnsupported = false
+    @Volatile private var codedBurstActive = false
 
     // Active range-test config — call applyConfig() to change; restarts advertising automatically
     @Volatile private var currentConfig: BleRangeTestConfig = BleRangeTestConfig()
@@ -68,6 +91,8 @@ class BluetoothGattServerManager(
         Log.i(TAG, "BLE config → ${config.codec.label} / ${config.txPower.label} / ${config.interval.label}")
         currentConfig = config
         restartAdvertising()
+        // A codec change flips probe viability (probe only runs in production 1M mode).
+        evaluateCodedProbe()
     }
 
     /** Convenience for codec-only changes (e.g. from MeshBatteryCoordinator). */
@@ -132,6 +157,8 @@ class BluetoothGattServerManager(
      * Stop GATT server
      */
     fun stop() {
+        // Tear down the supplementary probe first, independent of advertising lifecycle.
+        stopCodedProbe()
         if (!isActive) {
             // Idempotent stop
             stopAdvertising()
@@ -443,6 +470,10 @@ class BluetoothGattServerManager(
                 Log.e(TAG, "Exception starting advertising: ${e.message}")
             }
         }
+
+        // With the 1M floor on air, (re)evaluate the supplementary Coded probe.
+        // A freshly-started node defaults to 0 known peers → isolated → probes.
+        evaluateCodedProbe()
     }
 
     /**
@@ -502,6 +533,168 @@ class BluetoothGattServerManager(
         }
     }
     
+    // =========================================================================
+    // Isolation-gated supplementary Coded (S=8) probe
+    //
+    // This is ADDITIVE, never substitutive: the 1M legacy advertisement above is
+    // always the floor. When this node is isolated (few peers), we additionally
+    // emit low-duty-cycle Coded bursts to give distant / wall-separated BT5 peers
+    // an extra chance to discover and connect to us. When the node is well-meshed
+    // we stop, saving battery and freeing the channel for neighbours.
+    //
+    // Everything here degrades gracefully on devices without Coded PHY / extended
+    // advertising: it simply never starts, and a runtime failure latches it off.
+    // =========================================================================
+
+    /**
+     * Report the current active-peer count so the manager can decide whether to
+     * run the supplementary Coded probe. Cheap and idempotent — safe to call on
+     * every peer-list update.
+     */
+    fun updateMeshDensity(activePeerCount: Int) {
+        lastKnownPeerCount = activePeerCount
+        evaluateCodedProbe()
+    }
+
+    /** True only when a supplementary Coded probe can be safely attempted. */
+    private fun isCodedProbeViable(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (codedProbeUnsupported) return false
+        if (!isActive) return false
+        if (bleAdvertiser == null || bluetoothAdapter == null) return false
+        if (!permissionManager.hasBluetoothPermissions()) return false
+        // Don't interfere with the explicit range-test diagnostic: in that mode the
+        // user is deliberately driving the PHY themselves.
+        if (currentCodec != BleCodec.PHY_1M) return false
+        val enabled = try {
+            com.bitchat.android.ui.debug.DebugSettingsManager.getInstance().gattServerEnabled.value
+        } catch (_: Exception) { true }
+        if (!enabled) return false
+        return try {
+            BleCodec.isCodedPhySupported() &&
+                bluetoothAdapter.isMultipleAdvertisementSupported &&
+                bluetoothAdapter.isLeExtendedAdvertisingSupported &&
+                bluetoothAdapter.isLeCodedPhySupported
+        } catch (e: Exception) {
+            Log.w(TAG, "Coded PHY capability check failed: ${e.message}")
+            false
+        }
+    }
+
+    /** Start or stop the probe loop based on current isolation + viability. */
+    private fun evaluateCodedProbe() {
+        val isolated = lastKnownPeerCount < ISOLATION_PEER_THRESHOLD
+        if (isolated && isCodedProbeViable()) {
+            startCodedProbeLoop()
+        } else {
+            stopCodedProbe()
+        }
+    }
+
+    private fun startCodedProbeLoop() {
+        if (codedProbeJob?.isActive == true) return // already probing
+        Log.i(TAG, "Isolated ($lastKnownPeerCount peers) — starting supplementary S=8 probe")
+        codedProbeJob = connectionScope.launch {
+            try {
+                while (isActive &&
+                       lastKnownPeerCount < ISOLATION_PEER_THRESHOLD &&
+                       isCodedProbeViable()) {
+                    emitCodedBurst()
+                    delay(CODED_PROBE_BURST_MS)
+                    stopCodedBurst()
+                    delay(CODED_PROBE_IDLE_MS)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Coded probe loop ended: ${e.message}")
+            } finally {
+                stopCodedBurst()
+            }
+        }
+    }
+
+    private fun stopCodedProbe() {
+        if (codedProbeJob != null) {
+            Log.d(TAG, "Stopping supplementary S=8 probe (well-meshed or shutting down)")
+        }
+        codedProbeJob?.cancel()
+        codedProbeJob = null
+        stopCodedBurst()
+    }
+
+    /**
+     * Emit one Coded-PHY advertising burst. Connectable so a distant peer can
+     * connect directly. Any failure latches the probe off rather than crashing.
+     */
+    @Suppress("MissingPermission")
+    private fun emitCodedBurst() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (codedBurstActive) return
+        val advertiser = bleAdvertiser ?: return
+
+        val params = try {
+            AdvertisingSetParameters.Builder()
+                .setLegacyMode(false)
+                .setConnectable(true)
+                .setScannable(false) // connectable extended sets must not be scannable
+                .setPrimaryPhy(BluetoothDevice.PHY_LE_CODED)
+                .setSecondaryPhy(BluetoothDevice.PHY_LE_CODED)
+                .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH) // reach matters when isolated
+                .setInterval(AdvertisingSetParameters.INTERVAL_HIGH)     // lowest-power preset
+                .build()
+        } catch (e: Exception) {
+            Log.w(TAG, "Coded probe params unsupported — disabling probe: ${e.message}")
+            codedProbeUnsupported = true
+            return
+        }
+
+        // Service UUID alone is enough for discovery+connect; keep payload small so
+        // it fits the controller's extended-advertising data length on all hardware.
+        val data = AdvertiseData.Builder()
+            .addServiceUuid(ParcelUuid(AppConstants.Mesh.Gatt.SERVICE_UUID))
+            .setIncludeTxPowerLevel(false)
+            .setIncludeDeviceName(false)
+            .build()
+
+        codedProbeCallback = object : AdvertisingSetCallback() {
+            override fun onAdvertisingSetStarted(advertisingSet: AdvertisingSet?, txPower: Int, status: Int) {
+                if (status == AdvertisingSetCallback.ADVERTISE_SUCCESS) {
+                    codedBurstActive = true
+                    Log.d(TAG, "S=8 probe burst on air (txPower=$txPower)")
+                } else {
+                    // Controller rejected Coded advertising — give up permanently.
+                    Log.w(TAG, "S=8 probe failed (status=$status) — disabling probe for this session")
+                    codedProbeUnsupported = true
+                    codedBurstActive = false
+                }
+            }
+            override fun onAdvertisingSetStopped(advertisingSet: AdvertisingSet?) {
+                codedBurstActive = false
+            }
+        }
+
+        try {
+            advertiser.startAdvertisingSet(params, data, null, null, null, codedProbeCallback)
+        } catch (e: Exception) {
+            Log.w(TAG, "startAdvertisingSet for S=8 probe failed — disabling probe: ${e.message}")
+            codedProbeUnsupported = true
+            codedProbeCallback = null
+            codedBurstActive = false
+        }
+    }
+
+    @Suppress("MissingPermission")
+    private fun stopCodedBurst() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val cb = codedProbeCallback ?: return
+        try {
+            bleAdvertiser?.stopAdvertisingSet(cb)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error stopping S=8 probe burst: ${e.message}")
+        }
+        codedProbeCallback = null
+        codedBurstActive = false
+    }
+
     /**
      * Stop advertising — handles both legacy and extended advertising paths.
      */

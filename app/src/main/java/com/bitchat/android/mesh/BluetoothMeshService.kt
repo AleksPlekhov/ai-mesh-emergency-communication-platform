@@ -176,6 +176,9 @@ class BluetoothMeshService(private val context: Context) {
             override fun onPeerListUpdated(peerIDs: List<String>) {
                 // Update process-wide state first
                 try { com.bitchat.android.services.AppStateStore.setPeers(peerIDs) } catch (_: Exception) { }
+                // Feed mesh density to the connection layer so it can gate the
+                // isolation-triggered supplementary Coded (S=8) probe.
+                try { connectionManager.updateMeshDensity(peerIDs.size) } catch (_: Exception) { }
                 // Then notify UI delegate if attached
                 delegate?.didUpdatePeerList(peerIDs)
             }
