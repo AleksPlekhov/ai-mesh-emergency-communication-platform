@@ -22,6 +22,14 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
         private const val TAG = "MessageHandler"
         /** Minimum interval between telemetry TLV re-broadcasts for the same peer (3 minutes). */
         private const val TELEMETRY_THROTTLE_MS = 3 * 60 * 1000L
+
+        /**
+         * Relay hops crossed before reaching us. Every relay (phone or ESP32
+         * firmware relay) decrements TTL exactly once and touches no other byte,
+         * so this delta is an exact hop count regardless of which node relayed.
+         */
+        private fun hopCountOf(packet: BitchatPacket): Int =
+            (com.bitchat.android.util.AppConstants.MESSAGE_TTL_HOPS.toInt() - packet.ttl.toInt()).coerceAtLeast(0)
     }
 
     // Tracks when we last called updatePeerTelemetry for each peer to avoid flooding
@@ -447,7 +455,8 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
                     content = savedPath,
                     type = com.bitchat.android.features.file.FileUtils.messageTypeForMime(file.mimeType),
                     senderPeerID = peerID,
-                    timestamp = Date(packet.timestamp.toLong())
+                    timestamp = Date(packet.timestamp.toLong()),
+                    hopCount = hopCountOf(packet)
                 )
                 Log.d(TAG, "📄 Saved incoming file to $savedPath")
                 delegate?.onMessageReceived(message)
@@ -461,7 +470,8 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
                 sender = delegate?.getPeerNickname(peerID) ?: "unknown",
                 content = String(packet.payload, Charsets.UTF_8),
                 senderPeerID = peerID,
-                timestamp = Date(packet.timestamp.toLong())
+                timestamp = Date(packet.timestamp.toLong()),
+                hopCount = hopCountOf(packet)
             )
             delegate?.onMessageReceived(message)
         } catch (e: Exception) {
@@ -496,7 +506,8 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
                     senderPeerID = peerID,
                     timestamp = Date(packet.timestamp.toLong()),
                     isPrivate = true,
-                    recipientNickname = delegate?.getMyNickname()
+                    recipientNickname = delegate?.getMyNickname(),
+                    hopCount = hopCountOf(packet)
                 )
                 Log.d(TAG, "📄 Saved incoming file to $savedPath")
                 delegate?.onMessageReceived(message)
@@ -510,7 +521,8 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
                 sender = delegate?.getPeerNickname(peerID) ?: "unknown",
                 content = String(packet.payload, Charsets.UTF_8),
                 senderPeerID = peerID,
-                timestamp = Date(packet.timestamp.toLong())
+                timestamp = Date(packet.timestamp.toLong()),
+                hopCount = hopCountOf(packet)
             )
             delegate?.onMessageReceived(message)
 

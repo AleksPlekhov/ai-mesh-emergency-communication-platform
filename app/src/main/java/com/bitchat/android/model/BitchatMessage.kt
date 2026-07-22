@@ -69,7 +69,11 @@ data class BitchatMessage(
     val encryptedContent: ByteArray? = null,
     val isEncrypted: Boolean = false,
     val deliveryStatus: DeliveryStatus? = null,
-    val powDifficulty: Int? = null
+    val powDifficulty: Int? = null,
+    // Number of relay hops this message crossed before reaching us, derived from
+    // AppConstants.MESSAGE_TTL_HOPS - packet.ttl at the point of receipt. Null when
+    // not computed (e.g. locally-originated or system messages).
+    val hopCount: Int? = null
 ) : Parcelable {
 
     /**
