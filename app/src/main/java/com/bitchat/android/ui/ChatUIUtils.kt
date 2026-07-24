@@ -132,8 +132,14 @@ fun formatMessageAsAnnotatedString(
                 builder.append(" ⛨${bits}b")
             }
         }
+        // Relay hop count (mesh or ESP32 relay hardware), e.g. "· 2 hops"
+        message.hopCount?.let { hops ->
+            if (hops > 0) {
+                builder.append(" · ${hops} hop${if (hops == 1) "" else "s"}")
+            }
+        }
         builder.pop()
-        
+
     } else {
         // System message - iOS style
         builder.pushStyle(SpanStyle(
@@ -233,6 +239,9 @@ fun formatMessageHeaderAnnotatedString(
         builder.append("  [${timeFormatter.format(message.timestamp)}]")
         message.powDifficulty?.let { bits ->
             if (bits > 0) builder.append(" ⛨${bits}b")
+        }
+        message.hopCount?.let { hops ->
+            if (hops > 0) builder.append(" · ${hops} hop${if (hops == 1) "" else "s"}")
         }
         builder.pop()
     } else {

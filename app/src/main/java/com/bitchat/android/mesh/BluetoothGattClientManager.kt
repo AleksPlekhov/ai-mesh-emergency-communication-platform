@@ -6,6 +6,7 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.content.Context
+import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import com.bitchat.android.protocol.BitchatPacket
@@ -33,7 +34,37 @@ class BluetoothGattClientManager(
     companion object {
         private const val TAG = "BluetoothGattClientManager"
     }
-    
+
+    // Active PHY / coding scheme — call configureCodec() before first connection
+    @Volatile private var currentCodec: BleCodec = BleCodec.PHY_1M
+
+    /**
+     * Set the preferred BLE PHY for all future (and renegotiated) connections.
+     * Safe to call at any time; existing connections renegotiate on next
+     * [onServicesDiscovered] or when [renegotiatePhyForAll] is called explicitly.
+     */
+    fun configureCodec(codec: BleCodec) {
+        if (currentCodec == codec) return
+        Log.i(TAG, "BLE codec → ${codec.label}")
+        currentCodec = codec
+        renegotiatePhyForAll()
+    }
+
+    /** Push the current PHY preference to every open GATT connection. */
+    private fun renegotiatePhyForAll() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        connectionTracker.getConnectedDevices().values
+            .filter { it.isClient && it.gatt != null }
+            .forEach { applyPhy(it.gatt!!) }
+    }
+
+    private fun applyPhy(gatt: BluetoothGatt) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val codec = currentCodec
+        Log.d(TAG, "setPreferredPhy ${codec.label} on ${gatt.device.address}")
+        gatt.setPreferredPhy(codec.phyMask, codec.phyMask, codec.txOption)
+    }
+
     // Core Bluetooth components
     private val bluetoothManager: BluetoothManager = 
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -486,10 +517,13 @@ class BluetoothGattClientManager(
                             if (descriptor != null) {
                                 descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                                 gatt.writeDescriptor(descriptor)
-                                
+
+                                // Apply PHY preference (API 26+). BT4 devices ignore silently.
+                                applyPhy(gatt)
+
                                 connectionScope.launch {
                                     delay(200)
-                                    Log.i(TAG, "Client: Connection setup complete for $deviceAddress")
+                                    Log.i(TAG, "Client: Connection setup complete for $deviceAddress (PHY: ${currentCodec.label})")
                                     delegate?.onDeviceConnected(device)
                                 }
                             } else {

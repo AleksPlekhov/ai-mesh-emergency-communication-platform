@@ -6,7 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.compose) apply false
 }
 
-tasks.whenTaskAdded {
+tasks.configureEach {
     if (name.contains("ArtProfile")) {
         enabled = false
     }

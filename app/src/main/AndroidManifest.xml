@@ -48,6 +48,28 @@
     
     <!-- Battery optimization permission -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- System overlay / alert window (for emergency overlays) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- Exact alarm scheduling for emergency alerting -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Wake lock for real-time telemetry and emergency alerts -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Full-screen intents for emergency alerts -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Foreground service microphone for EAS audio monitoring -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- WiFi state for connectivity telemetry -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- Sensors for telemetry -->
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
     
     <!-- Hardware features -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
@@ -131,5 +153,38 @@
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- Connectivity test activity -->
+        <activity
+            android:name=".ui.connectivity.ConnectivityTestActivity"
+            android:exported="false"
+            android:theme="@style/Theme.BitchatAndroid"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- Telemetry test activity -->
+        <activity
+            android:name=".ui.connectivity.TelemetryTestActivity"
+            android:exported="false"
+            android:theme="@style/Theme.BitchatAndroid"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- Boot receiver for auto-start (top-level, separate from service.BootCompletedReceiver) -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- EAS Monitor Service for emergency FM audio monitoring -->
+        <service
+            android:name=".radio.EasMonitorService"
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
     </application>
 </manifest>

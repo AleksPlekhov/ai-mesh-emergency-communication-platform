@@ -633,12 +633,46 @@ private fun ChatDialogs(
     )
 
     // About sheet
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var showDebugSheet by remember { mutableStateOf(false) }
+    var showEmergencyFMSheet by remember { mutableStateOf(false) }
+    var showBleSheet by remember { mutableStateOf(false) }
+    var bleConfig by remember {
+        mutableStateOf(com.bitchat.android.mesh.BleCodecPreference.load(ctx))
+    }
     AboutSheet(
         isPresented = showAppInfo,
         onDismiss = onAppInfoDismiss,
-        onShowDebug = { showDebugSheet = true }
+        onShowDebug = { showDebugSheet = true },
+        onShowConnectivityTest = {
+            ctx.startActivity(
+                android.content.Intent(ctx, com.bitchat.android.ui.connectivity.ConnectivityTestActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        },
+        onShowTelemetryTest = {
+            ctx.startActivity(
+                android.content.Intent(ctx, com.bitchat.android.ui.connectivity.TelemetryTestActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        },
+        onShowEmergencyFM = { showEmergencyFMSheet = true },
+        onShowBleSettings = { showBleSheet = true }
     )
+    if (showEmergencyFMSheet) {
+        com.bitchat.android.ui.EmergencyFmScreenWrapper(onDismiss = { showEmergencyFMSheet = false })
+    }
+    if (showBleSheet) {
+        BleCodecSettingsSheet(
+            currentConfig = bleConfig,
+            onConfigApplied = { config ->
+                bleConfig = config
+                com.bitchat.android.mesh.BleCodecPreference.save(ctx, config)
+                viewModel.meshService?.applyRangeTestConfig(config)
+            },
+            onDismiss = { showBleSheet = false }
+        )
+    }
     if (showDebugSheet) {
         com.bitchat.android.ui.debug.DebugSettingsSheet(
             isPresented = showDebugSheet,

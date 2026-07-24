@@ -602,7 +602,7 @@ class MainActivity : OrientationAwareActivity() {
         }
         
         // For existing users, check battery optimization status
-        batteryOptimizationManager.logBatteryOptimizationStatus()
+        batteryOptimizationManager.logStatus()
         val currentBatteryOptimizationStatus = when {
             !batteryOptimizationManager.isBatteryOptimizationSupported() -> BatteryOptimizationStatus.NOT_SUPPORTED
             batteryOptimizationManager.isBatteryOptimizationDisabled() -> BatteryOptimizationStatus.DISABLED

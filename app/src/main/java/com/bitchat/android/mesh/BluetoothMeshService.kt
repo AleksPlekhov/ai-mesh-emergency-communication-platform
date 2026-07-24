@@ -176,6 +176,9 @@ class BluetoothMeshService(private val context: Context) {
             override fun onPeerListUpdated(peerIDs: List<String>) {
                 // Update process-wide state first
                 try { com.bitchat.android.services.AppStateStore.setPeers(peerIDs) } catch (_: Exception) { }
+                // Feed mesh density to the connection layer so it can gate the
+                // isolation-triggered supplementary Coded (S=8) probe.
+                try { connectionManager.updateMeshDensity(peerIDs.size) } catch (_: Exception) { }
                 // Then notify UI delegate if attached
                 delegate?.didUpdatePeerList(peerIDs)
             }
@@ -438,8 +441,12 @@ class BluetoothMeshService(private val context: Context) {
             override fun onVerifyResponseReceived(peerID: String, payload: ByteArray, timestampMs: Long) {
                 delegate?.didReceiveVerifyResponse(peerID, payload, timestampMs)
             }
+
+            override fun updatePeerTelemetry(peerID: String, packed: ByteArray) {
+                peerManager.updatePeerTelemetry(peerID, packed)
+            }
         }
-        
+
         // PacketProcessor delegates
         packetProcessor.delegate = object : PacketProcessorDelegate {
             override fun validatePacketSecurity(packet: BitchatPacket, peerID: String): Boolean {
@@ -1392,8 +1399,96 @@ class BluetoothMeshService(private val context: Context) {
         }
     }
     
+    // MARK: - Telemetry Support
+
+    /**
+     * Broadcast raw telemetry bytes as an ANNOUNCE payload extension (TLV type 0xFE).
+     * Called by TelemetryAgent to push sensor data to all mesh peers.
+     */
+    fun broadcastTelemetry(packed: ByteArray) {
+        serviceScope.launch {
+            try {
+                val tlv = encodeTelemetryTLV(packed)
+                val packet = BitchatPacket(
+                    version = 1u,
+                    type = com.bitchat.android.protocol.MessageType.ANNOUNCE.value,
+                    senderID = hexStringToByteArray(myPeerID),
+                    recipientID = com.bitchat.android.protocol.SpecialRecipients.BROADCAST,
+                    timestamp = System.currentTimeMillis().toULong(),
+                    payload = tlv,
+                    signature = null,
+                    ttl = MAX_TTL
+                )
+                val signed = signPacketBeforeBroadcast(packet)
+                connectionManager.broadcastPacket(RoutedPacket(signed))
+                Log.d(TAG, "Broadcast telemetry (${packed.size}B)")
+            } catch (e: Exception) {
+                Log.w(TAG, "broadcastTelemetry failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Update the locally cached telemetry snapshot for a peer identified by [peerID].
+     * Called from MessageHandler when an ANNOUNCE with telemetry TLV is decoded.
+     */
+    fun updatePeerTelemetry(peerID: String, packed: ByteArray) {
+        peerManager.updatePeerTelemetry(peerID, packed)
+    }
+
+    /**
+     * Encode raw telemetry [packed] bytes into a TLV with type 0xFE (telemetry).
+     * Format: [0xFE][length: 3 bytes big-endian][data…]
+     */
+    fun encodeTelemetryTLV(packed: ByteArray): ByteArray {
+        val out = java.io.ByteArrayOutputStream(4 + packed.size)
+        out.write(0xFE)
+        out.write((packed.size shr 16) and 0xFF)
+        out.write((packed.size shr 8)  and 0xFF)
+        out.write( packed.size         and 0xFF)
+        out.write(packed)
+        return out.toByteArray()
+    }
+
+    /**
+     * Parse a telemetry TLV block from an ANNOUNCE payload.
+     * Returns the raw telemetry bytes, or null if TLV is absent/malformed.
+     */
+    fun parsePeerTelemetry(announcePayload: ByteArray): ByteArray? {
+        var i = 0
+        while (i + 4 <= announcePayload.size) {
+            val type = announcePayload[i].toInt() and 0xFF
+            val len = ((announcePayload[i + 1].toInt() and 0xFF) shl 16) or
+                      ((announcePayload[i + 2].toInt() and 0xFF) shl 8)  or
+                       (announcePayload[i + 3].toInt() and 0xFF)
+            i += 4
+            if (type == 0xFE && i + len <= announcePayload.size) {
+                return announcePayload.copyOfRange(i, i + len)
+            }
+            i += len
+        }
+        return null
+    }
+
+    /** Expose the Android [Context] for TelemetryAgent and other consumers. */
+    fun getContext(): android.content.Context = context
+
+    /**
+     * Apply a BLE range-test configuration live — updates PHY, TX power and
+     * advertising interval on the scanner and advertiser immediately.
+     */
+    fun applyRangeTestConfig(config: BleRangeTestConfig) {
+        connectionManager.applyRangeTestConfig(config)
+    }
+
+    /** Expose the [PeerManager] for telemetry and AI agents. */
+    fun getPeerManager(): PeerManager = peerManager
+
+    /** Returns all currently connected peer IDs. */
+    fun getConnectedPeers(): List<String> = peerManager.getActivePeerIDs()
+
     // MARK: - Panic Mode Support
-    
+
     /**
      * Clear all internal mesh service data (for panic mode)
      */

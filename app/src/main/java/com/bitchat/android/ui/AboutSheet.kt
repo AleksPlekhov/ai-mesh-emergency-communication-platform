@@ -200,6 +200,10 @@ fun AboutSheet(
     isPresented: Boolean,
     onDismiss: () -> Unit,
     onShowDebug: (() -> Unit)? = null,
+    onShowConnectivityTest: (() -> Unit)? = null,
+    onShowTelemetryTest: (() -> Unit)? = null,
+    onShowEmergencyFM: (() -> Unit)? = null,
+    onShowBleSettings: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -633,6 +637,56 @@ fun AboutSheet(
                                 TextButton(onClick = onShowDebug) {
                                     Text(
                                         text = stringResource(R.string.about_debug_settings),
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = colorScheme.primary
+                                    )
+                                }
+                            }
+                            if (onShowBleSettings != null) {
+                                TextButton(onClick = {
+                                    onDismiss()
+                                    onShowBleSettings()
+                                }) {
+                                    Text(
+                                        text = "BLE PHY Mode",
+                                        style = TextStyle(fontFamily = FontFamily.Monospace)
+                                    )
+                                }
+                            }
+                            if (onShowConnectivityTest != null) {
+                                TextButton(onClick = {
+                                    onDismiss()
+                                    onShowConnectivityTest()
+                                }) {
+                                    Text(
+                                        text = "Connectivity Test",
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = colorScheme.primary
+                                    )
+                                }
+                            }
+                            if (onShowTelemetryTest != null) {
+                                TextButton(onClick = {
+                                    onDismiss()
+                                    onShowTelemetryTest()
+                                }) {
+                                    Text(
+                                        text = "Telemetry Test",
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = colorScheme.primary
+                                    )
+                                }
+                            }
+                            if (onShowEmergencyFM != null) {
+                                TextButton(onClick = {
+                                    onDismiss()
+                                    onShowEmergencyFM()
+                                }) {
+                                    Text(
+                                        text = "Emergency FM Radio",
                                         fontSize = 13.sp,
                                         fontFamily = FontFamily.Monospace,
                                         color = colorScheme.primary

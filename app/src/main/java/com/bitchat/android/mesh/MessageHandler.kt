@@ -20,7 +20,20 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
     
     companion object {
         private const val TAG = "MessageHandler"
+        /** Minimum interval between telemetry TLV re-broadcasts for the same peer (3 minutes). */
+        private const val TELEMETRY_THROTTLE_MS = 3 * 60 * 1000L
+
+        /**
+         * Relay hops crossed before reaching us. Every relay (phone or ESP32
+         * firmware relay) decrements TTL exactly once and touches no other byte,
+         * so this delta is an exact hop count regardless of which node relayed.
+         */
+        private fun hopCountOf(packet: BitchatPacket): Int =
+            (com.bitchat.android.util.AppConstants.MESSAGE_TTL_HOPS.toInt() - packet.ttl.toInt()).coerceAtLeast(0)
     }
+
+    // Tracks when we last called updatePeerTelemetry for each peer to avoid flooding
+    private val lastTelemetryUpdateMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
     
     // Delegate for callbacks
     var delegate: MessageHandlerDelegate? = null
@@ -294,7 +307,44 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
         } catch (_: Exception) { }
 
         Log.d(TAG, "✅ Processed verified TLV announce: stored identity for $peerID")
+
+        // Decode telemetry TLV types 0xFE (packed Telemeter) and 0xFD (connectivity snapshot)
+        // embedded inside the ANNOUNCE payload — throttled per peer to avoid UI flooding.
+        decodeTelemetryFromPayload(peerID, packet.payload)
+
         return isFirstAnnounce
+    }
+
+    /**
+     * Scan [payload] for telemetry TLV blocks (type 0xFE or 0xFD).
+     * If found and not throttled, forwards the raw bytes to the delegate's updatePeerTelemetry.
+     */
+    private fun decodeTelemetryFromPayload(peerID: String, payload: ByteArray) {
+        try {
+            var i = 0
+            while (i + 4 <= payload.size) {
+                val type = payload[i].toInt() and 0xFF
+                val len = ((payload[i + 1].toInt() and 0xFF) shl 16) or
+                          ((payload[i + 2].toInt() and 0xFF) shl 8)  or
+                           (payload[i + 3].toInt() and 0xFF)
+                i += 4
+                if (type == 0xFE || type == 0xFD) {
+                    if (i + len <= payload.size) {
+                        val telemetryBytes = payload.copyOfRange(i, i + len)
+                        val now = System.currentTimeMillis()
+                        val last = lastTelemetryUpdateMs[peerID] ?: 0L
+                        if (now - last >= TELEMETRY_THROTTLE_MS) {
+                            lastTelemetryUpdateMs[peerID] = now
+                            delegate?.updatePeerTelemetry(peerID, telemetryBytes)
+                            Log.d(TAG, "Decoded telemetry TLV 0x${type.toString(16).uppercase()} (${telemetryBytes.size}B) from $peerID")
+                        }
+                    }
+                }
+                i += len
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "decodeTelemetryFromPayload error for $peerID: ${e.message}")
+        }
     }
     
     /**
@@ -405,7 +455,8 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
                     content = savedPath,
                     type = com.bitchat.android.features.file.FileUtils.messageTypeForMime(file.mimeType),
                     senderPeerID = peerID,
-                    timestamp = Date(packet.timestamp.toLong())
+                    timestamp = Date(packet.timestamp.toLong()),
+                    hopCount = hopCountOf(packet)
                 )
                 Log.d(TAG, "📄 Saved incoming file to $savedPath")
                 delegate?.onMessageReceived(message)
@@ -419,7 +470,8 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
                 sender = delegate?.getPeerNickname(peerID) ?: "unknown",
                 content = String(packet.payload, Charsets.UTF_8),
                 senderPeerID = peerID,
-                timestamp = Date(packet.timestamp.toLong())
+                timestamp = Date(packet.timestamp.toLong()),
+                hopCount = hopCountOf(packet)
             )
             delegate?.onMessageReceived(message)
         } catch (e: Exception) {
@@ -454,7 +506,8 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
                     senderPeerID = peerID,
                     timestamp = Date(packet.timestamp.toLong()),
                     isPrivate = true,
-                    recipientNickname = delegate?.getMyNickname()
+                    recipientNickname = delegate?.getMyNickname(),
+                    hopCount = hopCountOf(packet)
                 )
                 Log.d(TAG, "📄 Saved incoming file to $savedPath")
                 delegate?.onMessageReceived(message)
@@ -468,7 +521,8 @@ class MessageHandler(private val myPeerID: String, private val appContext: andro
                 sender = delegate?.getPeerNickname(peerID) ?: "unknown",
                 content = String(packet.payload, Charsets.UTF_8),
                 senderPeerID = peerID,
-                timestamp = Date(packet.timestamp.toLong())
+                timestamp = Date(packet.timestamp.toLong()),
+                hopCount = hopCountOf(packet)
             )
             delegate?.onMessageReceived(message)
 
@@ -620,6 +674,9 @@ interface MessageHandlerDelegate {
     
     // Message operations
     fun decryptChannelMessage(encryptedContent: ByteArray, channel: String): String?
+
+    // Telemetry
+    fun updatePeerTelemetry(peerID: String, packed: ByteArray) {}
 
     // Callbacks
     fun onMessageReceived(message: BitchatMessage)

@@ -2,6 +2,7 @@ package com.bitchat.android.mesh
 
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.ScanSettings
+import android.os.Build
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -56,6 +57,9 @@ class PowerManager(private val context: Context) : LifecycleEventObserver {
     private var isCharging = false
     private var batteryLevel = 100
     private var isAppInBackground = true
+
+    // Active BLE codec — drives extended scan / advertise settings
+    @Volatile var bleCodec: BleCodec = BleCodec.PHY_1M
     
     private val powerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var dutyCycleJob: Job? = null
@@ -143,11 +147,22 @@ class PowerManager(private val context: Context) : LifecycleEventObserver {
     }
     
     /**
-     * Get scan settings optimized for current power mode
+     * Get scan settings optimized for current power mode and BLE codec.
+     *
+     * When [bleCodec] is not PHY_1M, extended scanning is enabled (API 26+):
+     * - setLegacy(false)  → discover BLE 5 extended advertising packets
+     * - setPhy(ALL)       → scan 1M + Coded PHY simultaneously
+     * BT4 hardware and API < 26 ignore these flags and stay on 1M.
      */
     fun getScanSettings(): ScanSettings {
         val builder = ScanSettings.Builder()
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+
+        // Enable extended (non-legacy) scanning for BLE 5 PHYs
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bleCodec != BleCodec.PHY_1M) {
+            builder.setLegacy(false)
+            builder.setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
+        }
 
         when (currentMode) {
             PowerMode.PERFORMANCE -> builder
