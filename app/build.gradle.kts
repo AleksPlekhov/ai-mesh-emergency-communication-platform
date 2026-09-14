@@ -147,7 +147,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     
     // EXIF orientation handling for images
-    implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation(libs.androidx.exifinterface)
 
     // AI module (voice STT, message classifier, and future AI features)
     implementation(project(":resqmesh-ai"))
